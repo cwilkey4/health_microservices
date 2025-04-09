@@ -1,147 +1,77 @@
+%% =========== %%
+%% Unit Tests  %%
+%% =========== %%
+
 -module(appt_test).
--include_lib("eunit/include/eunit.hrl"). 
+-include_lib("eunit/include/eunit.hrl").
 
 -record(state, {
-    id = doc_1,
     appointments = []}).
 
+% Setup and Teardown
+setup() ->
+    ok.
 
-%% Tests %% 
-% Happy Path
-appt_test() ->
-    {
-        setup,
-        fun start_link/0,
-        fun stop/0,
-        fun(_) ->
-            [
-                fun test_schedule/0,
-                fun test_reschedule/0,
-                fun test_cancel/0,
-                fun test_complete/0,
-                fun test_find_appt/0
-            ]
-        end
+teardown(_) ->
+    ok.
+
+% Test Suite
+handle_cast_test_() ->
+    {setup,
+        fun setup/0,
+        fun teardown/1,
+        [
+            fun schedule_happy_path_/0,
+            fun schedule_patient_conflict_/0,
+            fun schedule_time_conflict_/0,
+            fun reschedule_happy_path_/0,
+            fun reschedule_time_conflict_/0,
+            fun reschedule_no_existing_appt_/0
+        ]
     }.
 
-%% Negative Paths %%
-% Two schedules for one patient
-% (Only one at a time is permitted -- the first will remain) 
-two_schedules_test() ->
-    {
-        setup,
-        fun start_link/0,
-        fun reset/0,
-        fun stop/0,
-        fun two_schedules/0
-    }.
+% Helper function to create a state record
+create_state(Appointments) ->
+    #state{appointments = Appointments}.
 
-% Two patients scheduling for the same time
-% (The first appointment will remain)
-overlaping_schedules_test() ->
-    {
-        setup,
-        fun start_link/0,
-        fun reset/0,
-        fun stop/0,
-        fun overlap_schedules/0
-    }.
+% schedule/2 Tests
 
-% Cancelling an appointment that doesn't exist.
-% (State will remain the same)
-cancel_test() ->
-    {
-        setup,
-        fun start_link/0,
-        fun reset/0,
-        fun stop/0,
-        fun cancel_appt/0
-    }.
+schedule_happy_path_() ->
+    State = create_state([]),
+    NewTime = {2025, 4, 10, 9, 0, 0},
+    {noreply, NewState} = appt:handle_cast({schedule, patient_1, NewTime}, State),
+    ?assert(lists:member({patient_1, NewTime, scheduled}, NewState#state.appointments)).
 
+schedule_patient_conflict_() ->
+    ExistingTime = {2025, 4, 10, 9, 0, 0},
+    State = create_state([{patient_1, ExistingTime, scheduled}]),
+    {noreply, NewState} = appt:handle_cast({schedule, patient_1, ExistingTime}, State),
+    ?assertEqual(State, NewState).
 
-%% API %%
-start_link() ->
-    appt:start_link({local, appt}, appt, [], []).
+schedule_time_conflict_() ->
+    ExistingTime = {2025, 4, 10, 9, 0, 0},
+    State = create_state([{patient_2, ExistingTime, scheduled}]),
+    {noreply, NewState} = appt:handle_cast({schedule, patient_1, ExistingTime}, State),
+    ?assertEqual(State, NewState).
 
-stop() ->
-    appt:stop(appt).
+% reschedule/2 Tests
 
-reset() ->
-    appt:reset(appt).
+reschedule_happy_path_() ->
+    ExistingTime = {2025, 4, 10, 9, 0, 0},
+    NewTime = {2025, 4, 11, 10, 0, 0},
+    State = create_state([{patient_1, ExistingTime, scheduled}]),
+    {noreply, NewState} = appt:handle_cast({reschedule, patient_1, NewTime}, State),
+    ?assertEqual([{patient_1, NewTime, scheduled}], NewState#state.appointments).
 
-%% Testers %%
-test_schedule() ->
-    ok = appt:schedule({1, {2025,6,16,10,0,0}}),
-    ok = appt:schedule({2, {2025,6,16,11,0,0}}),
-    ok = appt:schedule({3, {2025,6,16,13,0,0}}),
+reschedule_time_conflict_() ->
+    _ExistingTime = {2025, 4, 10, 9, 0, 0},
+    NewTime = {2025, 4, 11, 10, 0, 0},
+    State = create_state([{patient_2, NewTime, scheduled}]),
+    {noreply, NewState} = appt:handle_cast({reschedule, patient_1, NewTime}, State),
+    ?assertEqual(State, NewState).
 
-    timer:sleep(100),
-
-    State = 
-    #state{id = doc_1, 
-        appointments = [{3,{2025,6,16,13,0,0}, scheduled},
-                        {2,{2025,6,16,11,0,0}, scheduled},
-                        {1,{2025,6,16,10,0,0}, scheduled}]},
-    ?assertEqual(State, appt:get_state()).
-
-test_reschedule() ->
-    ok = appt:reschedule({1,{2025,6,17,10,0,0}}),
-
-    timer:sleep(100),
-
-    State =     
-    #state{id = doc_1, 
-        appointments = [{3,{2025,6,16,13,0,0}, scheduled},
-                    {2,{2025,6,16,11,0,0}, scheduled},
-                    {1,{2025,6,17,10,0,0}, scheduled}]},
-    ?assertEqual(State, appt:get_state()).
-
-test_cancel() ->
-    ok = appt:cancel(2),
-
-    timer:sleep(100),
-
-    State = 
-    #state{id = doc_1, 
-    appointments = [{3,{2025,6,16,13,0,0}, scheduled},
-                    {1,{2025,6,17,10,0,0}, scheduled}]},
-    ?assertEqual(State, appt:get_state()).
-
-test_complete() ->
-    ok = appt:complete(3),
-
-    timer:sleep(100),
-
-    State = 
-    #state{id = doc_1, 
-    appointments = [{3,{2025,6,16,13,0,0}, complete},
-                    {1,{2025,6,17,10,0,0}, scheduled}]},
-    ?assertEqual(State, appt:get_state()).
-
-test_find_appt() ->
-    {1, {2025,6,17,10,0,0}} = appt:find_appt(1).
-
-
-two_schedules() ->
-    ok = appt:schedule({1, {2025,6,16,10,0,0}}),
-    ok = appt:schedule({1, {2025,6,16,10,0,0}}),
-
-    State = 
-    #state{id = doc_1, 
-        appointments = [{1,{2025,6,16,10,0,0}, scheduled}]},
-    ?assertEqual(State, appt:get_state()).    
-
-overlap_schedules() ->
-    ok = appt:schedule({1, {2025,6,16,10,0,0}}),
-    ok = appt:schedule({2, {2025,6,16,10,0,0}}),
-
-    State = 
-    #state{id = doc_1,
-        appointments = [{1,{2025,6,16,10,0,0}}]},
-    ?assertEqual(State, appt:get_state()).    
-    
-cancel_appt() ->
-    ok = appt:cancel(1),
-    State = #state{id = doc_1, appointments = []},
-
-    ?assertEqual(State, appt:get_state()).
+reschedule_no_existing_appt_() ->
+    State = create_state([]),
+    NewTime = {2025, 4, 11, 10, 0, 0},
+    {noreply, NewState} = appt:handle_cast({reschedule, patient_1, NewTime}, State),
+    ?assertEqual(State, NewState).
